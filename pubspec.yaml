@@ -16,7 +16,10 @@ dependencies:
   http: ^0.13.6
   crypto: ^3.0.0
   shared_preferences: ^2.0.8
-  flutter_zxing: ^1.6.1
+  flutter_barcode_sdk: ^2.2.6
+  image_picker: ^0.8.4+3
+  camera: ^0.10.0
+
 
 dev_dependencies:
   flutter_test:

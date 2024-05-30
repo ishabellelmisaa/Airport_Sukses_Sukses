@@ -1,5 +1,10 @@
+import 'dart:convert';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_zxing/flutter_zxing.dart';
+import 'package:flutter_barcode_sdk/dynamsoft_barcode.dart';
+import 'package:flutter_barcode_sdk/flutter_barcode_sdk.dart';
+import 'package:camera/camera.dart';
 import 'ScanResultPage.dart';
 import 'get_started_page.dart';
 
@@ -13,22 +18,90 @@ class QRViewExample extends StatefulWidget {
 class _QRViewExampleState extends State<QRViewExample> {
   bool isNavigating = false;
   bool isFlashOn = false;
+  late CameraController _cameraController;
+  late FlutterBarcodeSdk barcodeSdk;
+  bool _isScanning = false;
+
+  @override
+  void initState() {
+    super.initState();
+    barcodeSdk = FlutterBarcodeSdk(); // Inisialisasi BarcodeReader
+    barcodeSdk.setBarcodeFormats(BarcodeFormat.ALL);
+    _setDeblurLevel(5); // Set deblur level
+    _initializeCamera();
+  }
+
+  Future<void> _setDeblurLevel(int level) async {
+    String params = await barcodeSdk.getParameters();
+    dynamic obj = jsonDecode(params);
+    if (obj['ImageParameter'] != null) {
+      obj['ImageParameter']['DeblurLevel'] = level;
+    } else {
+      obj['deblurLevel'] = level;
+    }
+    await barcodeSdk.setParameters(json.encode(obj));
+  }
+
+  Future<void> _initializeCamera() async {
+    final cameras = await availableCameras();
+    final camera = cameras.first;
+    _cameraController = CameraController(camera, ResolutionPreset.high);
+
+    await _cameraController.initialize();
+    _cameraController.startImageStream((CameraImage image) {
+      if (!_isScanning) {
+        _isScanning = true;
+        _processCameraImage(image);
+      }
+    });
+    setState(() {});
+  }
+
+  Future<void> _processCameraImage(CameraImage image) async {
+    try {
+      // Convert CameraImage to Uint8List
+      final WriteBuffer allBytes = WriteBuffer();
+      for (Plane plane in image.planes) {
+        allBytes.putUint8List(plane.bytes);
+      }
+      final bytes = allBytes.done().buffer.asUint8List();
+
+      // Decode the image buffer
+      final List<BarcodeResult> results = await barcodeSdk.decodeImageBuffer(
+        bytes,
+        image.width,
+        image.height,
+        image.planes[0].bytesPerRow,
+        ImagePixelFormat.IPF_NV21.index,
+      );
+
+      if (results.isNotEmpty) {
+        String barcodeResult = results.first.text;
+        print("Scan result: $barcodeResult");
+        _handleScanResult(barcodeResult);
+      }
+    } catch (e) {
+      print("Error decoding image buffer: $e");
+    } finally {
+      _isScanning = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _cameraController.dispose();
+    //barcodeSdk.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
         children: [
-          ReaderWidget(
-            onScan: (result) async {
-              if (result != null && result.toString().isNotEmpty) {
-                String barcodeResult = result.toString();
-                print(
-                    "Scan result: $barcodeResult"); // Tambahkan ini untuk debugging
-                _handleScanResult(barcodeResult);
-              }
-            },
-          ),
+          _cameraController.value.isInitialized
+              ? CameraPreview(_cameraController)
+              : Center(child: CircularProgressIndicator()),
           Positioned(
             top: 40,
             left: 20,
@@ -36,19 +109,6 @@ class _QRViewExampleState extends State<QRViewExample> {
               icon: Icon(Icons.arrow_back, color: Colors.white),
               onPressed: () {
                 Navigator.pop(context);
-              },
-            ),
-          ),
-          Positioned(
-            top: 40,
-            right: 20,
-            child: IconButton(
-              icon: Icon(isFlashOn ? Icons.flash_off : Icons.flash_on,
-                  color: Colors.white),
-              onPressed: () {
-                setState(() {
-                  isFlashOn = !isFlashOn;
-                });
               },
             ),
           ),
@@ -61,7 +121,9 @@ class _QRViewExampleState extends State<QRViewExample> {
                 onPressed: () {
                   Navigator.pushAndRemoveUntil(
                     context,
-                    MaterialPageRoute(builder: (context) => GetStartedPage()),
+                    MaterialPageRoute(
+                      builder: (context) => GetStartedPage(),
+                    ),
                     (route) => false,
                   );
                 },
@@ -84,12 +146,11 @@ class _QRViewExampleState extends State<QRViewExample> {
   void _handleScanResult(String barcodeScanRes) {
     if (!mounted) return;
 
-    print(
-        "Handling scan result: $barcodeScanRes"); // Tambahkan ini untuk debugging
-    if (barcodeScanRes.isNotEmpty &&
-        barcodeScanRes != 'Gagal mendapatkan barcode.') {
+    print("Handling scan result: $barcodeScanRes");
+    if (barcodeScanRes.isNotEmpty) {
       _navigateToScanResultPage(barcodeScanRes);
     } else {
+      print("Scan result is empty or invalid");
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(builder: (context) => GetStartedPage()),
@@ -104,8 +165,7 @@ class _QRViewExampleState extends State<QRViewExample> {
         isNavigating = true;
       });
 
-      print(
-          "Navigating to ScanResultPage with code: $code"); // Tambahkan ini untuk debugging
+      print("Navigating to ScanResultPage with code: $code");
 
       await Navigator.push(
         context,
