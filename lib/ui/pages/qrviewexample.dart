@@ -15,9 +15,10 @@ class QRViewExample extends StatefulWidget {
 }
 
 class _QRViewExampleState extends State<QRViewExample> {
-  late CameraController _cameraController;
+  CameraController? _cameraController; // Use nullable type
   late FlutterBarcodeSdk _barcodeReader;
   bool _isScanning = false;
+  bool _isProcessing = false;
 
   @override
   void initState() {
@@ -27,17 +28,22 @@ class _QRViewExampleState extends State<QRViewExample> {
   }
 
   Future<void> _initializeCamera() async {
-    final cameras = await availableCameras();
-    final camera = cameras.first;
-    _cameraController = CameraController(camera, ResolutionPreset.high);
-    await _cameraController.initialize();
-    _cameraController.startImageStream((CameraImage image) {
-      if (!_isScanning) {
-        _isScanning = true;
-        _processCameraImage(image);
-      }
-    });
-    setState(() {});
+    try {
+      final cameras = await availableCameras();
+      final camera = cameras.first;
+      _cameraController = CameraController(camera, ResolutionPreset.high);
+      await _cameraController!.initialize();
+      setState(() {});
+
+      _cameraController!.startImageStream((CameraImage image) {
+        if (!_isScanning && !_isProcessing) {
+          _isScanning = true;
+          _processCameraImage(image);
+        }
+      });
+    } catch (e) {
+      print('Error initializing camera: $e');
+    }
   }
 
   Future<void> _initializeBarcodeReader() async {
@@ -48,7 +54,7 @@ class _QRViewExampleState extends State<QRViewExample> {
   }
 
   Future<void> _processCameraImage(CameraImage image) async {
-    if (!_cameraController.value.isInitialized) {
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
       return;
     }
 
@@ -91,16 +97,28 @@ class _QRViewExampleState extends State<QRViewExample> {
 
   @override
   void dispose() {
-    _cameraController.dispose();
+    _cameraController?.dispose(); // Use null-aware operator
     super.dispose();
   }
 
   void _handleScanResult(String barcodeScanRes) {
-    if (!mounted) return;
+    if (!mounted || _isProcessing) return;
 
     print("Handling scan result: $barcodeScanRes");
     if (barcodeScanRes.isNotEmpty) {
-      _navigateToScanResultPage(barcodeScanRes);
+      _isProcessing = true;
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ScanResultPage(
+            rawpnr: barcodeScanRes,
+            token: '', // Pastikan ini diisi dengan token yang valid
+          ),
+        ),
+      ).then((_) {
+        _isProcessing = false;
+      });
     } else {
       print("Scan result is empty or invalid");
       Navigator.pushAndRemoveUntil(
@@ -111,26 +129,13 @@ class _QRViewExampleState extends State<QRViewExample> {
     }
   }
 
-  void _navigateToScanResultPage(String code) async {
-    // Navigasi ke halaman hasil pemindaian dengan membawa data barcode
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ScanResultPage(
-          rawpnr: code,
-          token: '', // Pastikan ini diisi dengan token yang valid
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
         children: [
-          _cameraController.value.isInitialized
-              ? CameraPreview(_cameraController)
+          _cameraController != null && _cameraController!.value.isInitialized
+              ? CameraPreview(_cameraController!)
               : Center(child: CircularProgressIndicator()),
           Positioned(
             top: 40,
